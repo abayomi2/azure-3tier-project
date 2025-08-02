@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3-Tier Application Frontend</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background-color: #f0f4f8; color: #333; }
+        h1 { color: #2c3e50; }
+        p { font-size: 1.2em; }
+        .message { margin-top: 20px; padding: 20px; background-color: #ecf0f1; border-radius: 8px; display: inline-block; }
+    </style>
+</head>
+<body>
+    <h1>Welcome to the 3-Tier App</h1>
+    <p>This is the frontend of our application.</p>
+    <div class="message">
+        <p>Backend Status: <span id="backend-status">Loading...</span></p>
+    </div>
+    <script>
+        // A simple script to call the backend API
+        document.addEventListener('DOMContentLoaded', () => {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const status = document.getElementById('backend-status');
+                    status.textContent = data.message;
+                    status.style.color = 'green';
+                })
+                .catch(error => {
+                    const status = document.getElementById('backend-status');
+                    status.textContent = 'Backend is not reachable!';
+                    status.style.color = 'red';
+                    console.error('Error fetching backend status:', error);
+                });
+        });
+    </script>
+</body>
+</html>
