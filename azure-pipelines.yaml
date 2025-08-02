@@ -1,0 +1,107 @@
+# This pipeline builds, pushes Docker images, and deploys to AKS using Terraform.
+
+trigger:
+- main
+
+variables:
+  # Replace with your DockerHub user and repository names
+  dockerRegistryServiceConnection: 'DockerHubServiceConnection'
+  dockerHubUser: 'your-dockerhub-user'
+  backendImageName: '3-tier-backend'
+  frontendImageName: '3-tier-frontend'
+
+  # Azure service connection for Terraform
+  azureServiceConnection: 'AzureServiceConnection'
+
+  # Terraform configuration
+  terraformWorkingDirectory: 'terraform'
+
+stages:
+- stage: BuildAndPush
+  displayName: 'Build and Push Docker Images'
+  jobs:
+  - job: BuildAndPushBackend
+    displayName: 'Build and Push Backend Image'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push Backend Image'
+      inputs:
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(dockerHubUser)/$(backendImageName)'
+        command: 'buildAndPush'
+        Dockerfile: 'backend/Dockerfile'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+  - job: BuildAndPushFrontend
+    displayName: 'Build and Push Frontend Image'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push Frontend Image'
+      inputs:
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(dockerHubUser)/$(frontendImageName)'
+        command: 'buildAndPush'
+        Dockerfile: 'frontend/Dockerfile'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+- stage: Deploy
+  displayName: 'Deploy to AKS'
+  dependsOn: BuildAndPush
+  jobs:
+  - job: TerraformDeploy
+    displayName: 'Terraform and Kubernetes Deployment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Terraform init'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # The remote state backend needs to be configured manually first
+          # az group create -n terraform-state-rg -l eastus
+          # az storage account create -n terrastate3tierproj -g terraform-state-rg -l eastus --sku Standard_LRS
+          # az storage container create -n tfstate --account-name terrastate3tierproj
+
+          cd $(terraformWorkingDirectory)
+          terraform init -backend-config="resource_group_name=terraform-state-rg" -backend-config="storage_account_name=terrastate3tierproj" -backend-config="container_name=tfstate" -backend-config="key=aks.terraform.tfstate"
+
+    - task: AzureCLI@2
+      displayName: 'Terraform apply'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd $(terraformWorkingDirectory)
+          terraform apply -auto-approve
+
+    - task: AzureCLI@2
+      displayName: 'Get AKS Credentials'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az aks get-credentials --resource-group $(resourceGroupName) --name $(clusterName) --overwrite-existing
+          echo "##vso[task.setvariable variable=KUBECONFIG;isOutput=true]$(cat ~/.kube/config)"
+
+    - task: Kubernetes@1
+      displayName: 'Deploy Kubernetes Manifests'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: 'your-aks-service-connection' # Create a Kubernetes service connection to the AKS cluster
+        command: 'apply'
+        arguments: '-f $(System.DefaultWorkingDirectory)/kubernetes-manifests/'
+        secretType: 'dockerRegistry'
+        secretName: 'dockerhub-secret'
